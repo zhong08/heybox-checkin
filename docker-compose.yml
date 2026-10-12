@@ -1,0 +1,14 @@
+services:
+  heybox:
+    build: .
+    image: heybox-checkin:py312
+    env_file:
+      - .env
+    environment:
+      TZ: Asia/Shanghai
+    volumes:
+      - ./logs:/app/logs
+    restart: "no"
+    init: true
+    mem_limit: 300m
+    cpus: 1.0

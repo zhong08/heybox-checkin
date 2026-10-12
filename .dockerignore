@@ -1,0 +1,11 @@
+.git
+.env
+.env.*
+.venv
+logs
+__pycache__
+*.log
+login-qr*.png
+login-state.json
+DEPLOYMENT_STATUS.md
+.private

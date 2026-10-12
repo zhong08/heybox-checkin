@@ -1,0 +1,140 @@
+"""离线自检；不访问小黑盒、不发送微信通知。运行：python3.12 test_check.py"""
+import json
+import os
+import sys
+from unittest.mock import Mock, patch
+
+import requests
+
+import config
+import main
+import notify
+import native_sign
+from heybox import Result, check_in, parse_result, sign, task_details, state_details
+from utils import redact, request_json
+
+
+def response(status, body):
+    result = requests.Response()
+    result.status_code = status
+    result._content = json.dumps(body).encode()
+    result._content_consumed = True
+    return result
+
+
+def check():
+    assert sign("/bbs/app/api/general/search/v1", 1700000000, "0123456789ABCDEF0123456789ABCDEF") == "YT27P47"
+    assert sign("bbs/app/api/general/search/v1/", 1784911948, "ABCDEF0123456789ABCDEF0123456789") == "Y1X0S26"
+    assert sign("/task/sign_v3/sign", 1700000000, "0123456789ABCDEF0123456789ABCDEF") == "ZPUVS54"
+    assert parse_result({"status": "ok", "result": {"state": "success"}}).status == "签到成功"
+    assert parse_result({"status": "ok", "state": "ignore"}).status == "今日已签到"
+    assert parse_result({"status": "ok"}).status == "API 返回异常"
+    assert parse_result({"status": "need_login"}).status == "登录失效"
+    assert parse_result({"status": "failed", "msg": "错误"}).message == "错误"
+    assert not task_details({"status": "ok", "result": {"task_list": None}})
+    info = task_details({"status": "ok", "result": {"task_list": [{"tasks": [
+        {"type": "sign", "award_desc_v2": [{"desc": "+40"}], "sign_in_streak": 1}]}]}})
+    assert "+40" in info and "1 天" in info and "经验" not in info
+    finished = {"status": "ok", "result": {"state": "ok", "sign_in_streak": 28, "sign_in_exp": 60, "sign_in_coin": 66}}
+    assert "H币 66" in state_details(finished) and "经验 60" in state_details(finished)
+    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": "ignore"}}, finished]) as request:
+        outcome = check_in()
+        assert outcome.status == "今日已签到" and "28 天" in outcome.details
+        assert request.call_count == 2
+    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", return_value={"status": "failed", "msg": "非法请求"}) as request:
+        assert check_in().status == "API 返回异常"
+        request.assert_called_once()
+    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": "success"}}, requests.Timeout()]):
+        assert check_in().status == "签到成功", "detail failures must preserve submit success"
+
+    with patch.dict(os.environ, {}, clear=True):
+        try:
+            config.credentials()
+            assert False, "missing credentials should fail"
+        except ValueError as exc:
+            assert "HEYBOX_PKEY" in str(exc)
+        os.environ.update(HEYBOX_COOKIE="pkey=privatekey123456; heybox_id=42; x_xhh_tokenid=secret789token")
+        assert config.credentials()[0] == "42"
+        assert "privatekey123456" not in redact("pkey=privatekey123456")
+        assert "secret789token" not in redact("secret789token")
+        os.environ["PUSHPLUS_TOKEN"] = "test-not-real"
+        assert config.notification_provider() == "pushplus"
+        os.environ["SERVERCHAN_SENDKEY"] = "SCTtestnotreal"
+        assert config.notification_provider() == "serverchan"
+        with patch("notify.request_json", return_value={"code": 0}) as request:
+            notify.send_serverchan("test", "content")
+            assert request.call_args.args[2] == "https://sctapi.ftqq.com/SCTtestnotreal.send"
+        os.environ["SERVERCHAN_SENDKEY"] = "sctp123tTestNotReal"
+        with patch("notify.request_json", return_value={"code": 0}) as request:
+            notify.send_serverchan("test", "content")
+            assert request.call_args.args[2] == "https://123.push.ft07.com/send/sctp123tTestNotReal.send"
+        with patch("notify.request_json", return_value={"code": 400, "msg": "rejected"}):
+            assert not notify.send_notification("test", "content")
+
+    session = Mock()
+    session.request.side_effect = [requests.Timeout(), response(503, {}), response(200, {"status": "ok"})]
+    with patch("utils.time.sleep") as sleep:
+        assert request_json(session, "GET", "https://example.invalid") == {"status": "ok"}
+        assert [call.args[0] for call in sleep.call_args_list] == [1, 2]
+    assert session.request.call_count == 3
+    session.request.side_effect = [requests.Timeout(), response(200, {"status": "ok"})]
+    with patch("utils.time.sleep"):
+        params = Mock(side_effect=[{"nonce": "first"}, {"nonce": "fresh"}])
+        request_json(session, "GET", "https://example.invalid", params=params)
+        assert params.call_count == 2 and session.request.call_args.kwargs["params"] == {"nonce": "fresh"}
+    assert session.request.call_args.kwargs["timeout"] == 10
+    assert session.request.call_args.kwargs["allow_redirects"] is False
+    session.request.reset_mock()
+    session.request.side_effect = requests.Timeout()
+    with patch("utils.time.sleep"):
+        try:
+            request_json(session, "GET", "https://example.invalid")
+            assert False
+        except requests.Timeout:
+            assert session.request.call_count == 3
+    broken = response(200, {})
+    broken._content = b"<html>not JSON</html>"
+    session.request.side_effect = None
+    session.request.return_value = broken
+    try:
+        request_json(session, "GET", "https://example.invalid")
+        assert False
+    except ValueError as exc:
+        assert "JSON" in str(exc)
+
+    with patch.object(sys, "argv", ["main.py", "--test-notify"]), patch("main.setup_logging"), \
+            patch("main.check_in") as mocked_check_in, patch("main.send_notification", return_value=True) as notification:
+        assert main.main() == 0
+        mocked_check_in.assert_not_called()
+        notification.assert_called_once()
+    with patch.object(sys, "argv", ["main.py"]), patch("main.setup_logging"), \
+            patch("main.check_in", return_value=Result("签到成功", "done")), \
+            patch("main.send_notification", return_value=False) as notification:
+        assert main.main() == 2
+        assert "签到成功" in notification.call_args.args[0]
+    for failure in (ValueError("缺少 HEYBOX_PKEY"), requests.Timeout(), RuntimeError("secret")):
+        with patch.object(sys, "argv", ["main.py"]), patch("main.setup_logging"), \
+                patch("main.check_in", side_effect=failure), patch("main.send_notification", return_value=True) as notification:
+            assert main.main() == 1
+            notification.assert_called_once()
+    with patch.dict(os.environ, {"HEYBOX_DEVICE_INFO": "RMX6688", "HEYBOX_IMEI": "test-device", "HEYBOX_DEBUG_INFO": "test-context"}), \
+            patch("native_sign.subprocess.run", return_value=Mock(stdout=json.dumps(
+                {"_time": "1791780466", "nonce": "A" * 32, "hkey": "1234ABCD", "_rnd": "14:5678ABCD"}))) as run:
+        signed = native_sign.signed_params("/task/sign_v3/sign", "42")
+        assert signed["os_type"] == "Android" and signed["hkey"] == "1234ABCD"
+        assert json.loads(run.call_args.kwargs["input"])["path"] == "/task/sign_v3/sign/"
+        assert "SERVERCHAN_SENDKEY" not in run.call_args.kwargs["env"]
+        run.return_value.stdout = "{}"
+        try:
+            native_sign.signed_params("/task/sign_v3/sign", "42")
+            assert False, "invalid native output should fail"
+        except RuntimeError:
+            pass
+    print("全部离线自检通过：签名、状态解析、脱敏、通知隔离、重试上限、异常通知。")
+
+
+if __name__ == "__main__":
+    check()

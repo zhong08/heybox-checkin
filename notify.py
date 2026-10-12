@@ -1,0 +1,48 @@
+import re
+
+import requests
+
+from config import notification_provider, value
+from utils import log, redact, request_json
+
+
+def send_serverchan(title, content):
+    key = value("SERVERCHAN_SENDKEY")
+    if key.startswith("sctp"):
+        match = re.fullmatch(r"sctp(\d+)t[A-Za-z0-9]+", key)
+        if not match:
+            raise ValueError("Server酱³ SendKey 格式错误")
+        url = f"https://{match[1]}.push.ft07.com/send/{key}.send"
+    else:
+        if not re.fullmatch(r"SCT[A-Za-z0-9]+", key):
+            raise ValueError("Server酱 Turbo SendKey 应以 SCT 开头")
+        url = f"https://sctapi.ftqq.com/{key}.send"
+    with requests.Session() as session:
+        data = request_json(session, "POST", url, json={"title": title, "desp": content})
+    if data.get("code") != 0:
+        raise ValueError("Server酱 API 拒绝通知：" + redact(data.get("message", data.get("msg", "未提供原因")))[:300])
+
+
+def send_pushplus(title, content):
+    with requests.Session() as session:
+        data = request_json(session, "POST", "https://www.pushplus.plus/send", json={
+            "token": value("PUSHPLUS_TOKEN"), "title": title, "content": content,
+            "template": "markdown", "channel": "wechat"})
+    if data.get("code") != 200:
+        raise ValueError("PushPlus API 拒绝通知：" + redact(data.get("msg", "未提供原因"))[:300])
+
+
+def send_notification(title, content):
+    try:
+        provider = notification_provider()
+        log.info("正在发送微信通知：%s", provider)
+        sender = send_serverchan if provider == "serverchan" else send_pushplus
+        sender(redact(title).replace("\n", " "), redact(content))
+        log.info("通知状态：成功（推送服务已受理，请在微信确认收件）")
+        return True
+    except requests.RequestException as exc:
+        log.error("通知状态：失败，网络/HTTP 异常 %s%s", type(exc).__name__,
+                  f" HTTP {exc.response.status_code}" if exc.response is not None else "")
+    except Exception as exc:
+        log.error("通知状态：失败，%s", redact(str(exc)) if isinstance(exc, ValueError) else type(exc).__name__)
+    return False
