@@ -6,6 +6,7 @@ import requests
 
 from config import value
 from heybox import Result, check_in
+from native_sign import NativeSignError
 from notify import send_notification
 from utils import log, redact, setup_logging
 
@@ -26,6 +27,8 @@ def main():
         result = Result("登录失效" if status == 401 else "HTTP 状态异常", f"HTTP {status}")
     except requests.RequestException as exc:
         result = Result("网络请求失败", type(exc).__name__)
+    except NativeSignError as exc:
+        result = Result("原生签名失败", str(exc))
     except ValueError as exc:
         message = redact(str(exc))
         result = Result("JSON 解析异常" if "JSON" in message else "配置/API 异常", message)

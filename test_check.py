@@ -1,6 +1,7 @@
 """离线自检；不访问小黑盒、不发送微信通知。运行：python3.12 test_check.py"""
 import json
 import os
+import subprocess
 import sys
 from unittest.mock import Mock, patch
 
@@ -120,6 +121,8 @@ def check():
                 patch("main.check_in", side_effect=failure), patch("main.send_notification", return_value=True) as notification:
             assert main.main() == 1
             notification.assert_called_once()
+            if isinstance(failure, RuntimeError):
+                assert "RuntimeError" in notification.call_args.args[1] and "secret" not in notification.call_args.args[1]
     with patch.dict(os.environ, {"HEYBOX_DEVICE_INFO": "RMX6688", "HEYBOX_IMEI": "test-device", "HEYBOX_DEBUG_INFO": "test-context"}), \
             patch("native_sign.subprocess.run", return_value=Mock(stdout=json.dumps(
                 {"_time": "1791780466", "nonce": "A" * 32, "hkey": "1234ABCD", "_rnd": "14:5678ABCD"}))) as run:
@@ -127,12 +130,39 @@ def check():
         assert signed["os_type"] == "Android" and signed["hkey"] == "1234ABCD"
         assert json.loads(run.call_args.kwargs["input"])["path"] == "/task/sign_v3/sign/"
         assert "SERVERCHAN_SENDKEY" not in run.call_args.kwargs["env"]
-        run.return_value.stdout = "{}"
-        try:
-            native_sign.signed_params("/task/sign_v3/sign", "42")
-            assert False, "invalid native output should fail"
-        except RuntimeError:
-            pass
+        # Native uint32 hex strings omit leading zeroes; never pad or alter them.
+        for hkey, rnd in (("0", "14:0"), ("123ABCD", "14:567ABCD"), ("1234ABCD", "14:5678ABCD")):
+            run.return_value.stdout = json.dumps({"_time": "1791780466", "nonce": "A" * 32, "hkey": hkey, "_rnd": rnd})
+            signed = native_sign.signed_params("/task/sign_v3/sign", "42")
+            assert signed["hkey"] == hkey and signed["_rnd"] == rnd
+        invalid = ["{}", "not-json-private-metadata"]
+        for field, values in (("hkey", ("", "123456789", "G1234567", None)),
+                              ("_rnd", ("14:", "14:123456789", "15:12345678", "14:XYZ")),
+                              ("nonce", ("A" * 31, "A" * 33, "+" * 32))):
+            for value in values:
+                invalid.append(json.dumps({"_time": "1791780466", "nonce": "A" * 32,
+                                           "hkey": "1234ABCD", "_rnd": "14:5678ABCD", field: value}))
+        for output in invalid:
+            run.return_value.stdout = output
+            try:
+                native_sign.signed_params("/task/sign_v3/sign", "42")
+                assert False, "invalid native output should fail"
+            except native_sign.NativeSignError as exc:
+                assert str(exc) == "原生签名模块返回格式异常"
+        for failure, reason in (
+                (subprocess.TimeoutExpired("private-command", 45, output="private-output", stderr="private-stderr"), "超过 45 秒"),
+                (subprocess.CalledProcessError(-9, "private-command", output="private-output", stderr="private-stderr"), "退出码 -9"),
+                (FileNotFoundError(2, "private-path"), "系统错误 2"),
+                (UnicodeDecodeError("utf8", b"\xff", 0, 1, "private-output"), "不是有效 UTF-8")):
+            run.side_effect = failure
+            with patch.object(sys, "argv", ["main.py"]), patch("main.setup_logging"), \
+                    patch("main.check_in", side_effect=lambda: native_sign.signed_params("/task/sign_v3/sign", "42")), \
+                    patch("main.send_notification", return_value=True) as notification:
+                assert main.main() == 1
+                notification.assert_called_once()
+                content = notification.call_args.args[1]
+                assert "原生签名失败" in content and reason in content
+                assert "private-" not in content, "child diagnostics must not leak metadata"
     print("全部离线自检通过：签名、状态解析、脱敏、通知隔离、重试上限、异常通知。")
 
 

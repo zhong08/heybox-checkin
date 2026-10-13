@@ -93,8 +93,11 @@ public final class NativeSigner extends AbstractJni {
         if (key == null) throw new IllegalStateException("Native signature failed");
         DvmObject<?> rnd = shader.callStaticJniMethodObject(emulator,
                 "getObjType(Landroid/content/Context;Ljava/lang/String;Z)Ljava/lang/String;", context, nonce, true);
-        if (rnd == null || !key.getValue().toString().matches("[0-9A-F]{8}") || !rnd.getValue().toString().matches("[0-9A-F]{8}")
-                || !nonce.matches("[A-Za-z0-9]{32}")) throw new IllegalStateException("Unexpected native signature");
+        // Native hexadecimal values omit leading zeroes; preserve them verbatim.
+        if (rnd == null || !key.getValue().toString().matches("[0-9A-F]{1,8}") || !rnd.getValue().toString().matches("[0-9A-F]{1,8}")
+                || !nonce.matches("[A-Za-z0-9]{32}")) throw new IllegalStateException("Unexpected native signature: hkey length="
+                + key.getValue().toString().length() + ", rnd length=" + (rnd == null ? -1 : rnd.getValue().toString().length())
+                + ", nonce length=" + nonce.length());
         Map<String, String> output = new LinkedHashMap<>();
         output.put("_time", timestamp); output.put("nonce", nonce); output.put("hkey", key.getValue().toString());
         output.put("_rnd", "14:" + rnd.getValue());
