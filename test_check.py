@@ -29,27 +29,54 @@ def check():
     assert sign("/task/sign_v3/sign", 1700000000, "0123456789ABCDEF0123456789ABCDEF") == "ZPUVS54"
     assert parse_result({"status": "ok", "result": {"state": "success"}}).status == "签到成功"
     assert parse_result({"status": "ok", "state": "ignore"}).status == "今日已签到"
-    assert parse_result({"status": "ok"}).status == "API 返回异常"
+    assert parse_result({"status": "ok"}).status == "签到结果待确认"
+    assert parse_result({"status": "ok", "result": {"state": ""}}).status == "签到结果待确认"
     assert parse_result({"status": "need_login"}).status == "登录失效"
     assert parse_result({"status": "failed", "msg": "错误"}).message == "错误"
     assert not task_details({"status": "ok", "result": {"task_list": None}})
     info = task_details({"status": "ok", "result": {"task_list": [{"tasks": [
         {"type": "sign", "award_desc_v2": [{"desc": "+40"}], "sign_in_streak": 1}]}]}})
     assert "+40" in info and "1 天" in info and "经验" not in info
-    finished = {"status": "ok", "result": {"state": "ok", "sign_in_streak": 28, "sign_in_exp": 60, "sign_in_coin": 66}}
+    finished = {"status": "ok", "result": {"state": "ok", "signed_date": 17167,
+                "sign_in_streak": 28, "sign_in_exp": 60, "sign_in_coin": 66}}
     assert "H币 66" in state_details(finished) and "经验 60" in state_details(finished)
-    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+    with patch("heybox.time.time", return_value=1483200060), \
+            patch("heybox.credentials", return_value=("42", "pkey=test")), \
             patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": "ignore"}}, finished]) as request:
         outcome = check_in()
         assert outcome.status == "今日已签到" and "28 天" in outcome.details
         assert request.call_count == 2
-    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
-            patch("heybox.request_json", return_value={"status": "failed", "msg": "非法请求"}) as request:
-        assert check_in().status == "API 返回异常"
-        request.assert_called_once()
+    for rejected in ({"status": "failed", "msg": "非法请求"},
+                     {"status": "ok", "result": {"state": "fail"}}, {"status": "need_login"}):
+        with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+                patch("heybox.request_json", return_value=rejected) as request:
+            assert check_in().status not in ("签到成功", "今日已签到")
+            request.assert_called_once()  # A rejected submission must not be replaced by existing sign state.
     with patch("heybox.credentials", return_value=("42", "pkey=test")), \
             patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": "success"}}, requests.Timeout()]):
         assert check_in().status == "签到成功", "detail failures must preserve submit success"
+
+    # At Beijing 2017-01-01 00:01, UTC is still yesterday. Empty submit states
+    # require an authoritative current-day record, never status=ok alone.
+    for submitted in ({"status": "ok", "result": {"state": ""}}, {"status": "ok"}):
+        with patch("heybox.time.time", return_value=1483200060), \
+                patch("heybox.credentials", return_value=("42", "pkey=test")), \
+                patch("heybox.request_json", side_effect=[submitted, finished]) as request:
+            outcome = check_in()
+            assert outcome.status == "今日已签到" and "28 天" in outcome.details
+            assert request.call_count == 2 and "今日记录确认" in outcome.message
+    for invalid in ({"status": "failed", "result": finished["result"]},
+                    {"status": "ok", "result": {**finished["result"], "state": "fail"}},
+                    *({"status": "ok", "result": {**finished["result"], "signed_date": day}}
+                      for day in (17166, 17168, None, "17167", True))):
+        with patch("heybox.time.time", return_value=1483200060), \
+                patch("heybox.credentials", return_value=("42", "pkey=test")), \
+                patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": ""}}, invalid]):
+            outcome = check_in()
+            assert outcome.status == "签到结果待确认" and not outcome.details
+    with patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": ""}}, requests.Timeout()]):
+        assert check_in().status == "签到结果待确认"
 
     with patch.dict(os.environ, {}, clear=True):
         try:
@@ -116,6 +143,11 @@ def check():
             patch("main.send_notification", return_value=False) as notification:
         assert main.main() == 2
         assert "签到成功" in notification.call_args.args[0]
+    with patch.object(sys, "argv", ["main.py"]), patch("main.setup_logging"), \
+            patch("main.check_in", return_value=Result("签到结果待确认", "unconfirmed")), \
+            patch("main.send_notification", return_value=True) as notification:
+        assert main.main() == 1
+        assert "待确认" in notification.call_args.args[0] and "失败" not in notification.call_args.args[0]
     for failure in (ValueError("缺少 HEYBOX_PKEY"), requests.Timeout(), RuntimeError("secret")):
         with patch.object(sys, "argv", ["main.py"]), patch("main.setup_logging"), \
                 patch("main.check_in", side_effect=failure), patch("main.send_notification", return_value=True) as notification:

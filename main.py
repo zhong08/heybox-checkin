@@ -40,6 +40,7 @@ def main():
     now = datetime.now(timezone(timedelta(hours=8))).strftime("%Y-%m-%d %H:%M:%S")
     content = f"账号：{value('HEYBOX_ID') or '见 Cookie 配置'}\n\n状态：{result.status}\n\n{result.message}\n\n{result.details}\n\n签到时间：{now}\n\n运行设备：飞牛 fnOS"
     title = {"签到成功": "小黑盒签到成功 ✅", "今日已签到": "小黑盒今日已签到 ☑️",
+             "签到结果待确认": "⚠️ 小黑盒签到结果待确认",
              "登录失效": "⚠️ 小黑盒登录失效"}.get(result.status, "❌ 小黑盒签到失败")
     notified = send_notification(title, content)
     log.info("本次任务完成，耗时 %.2f 秒；签到=%s；通知=%s", time.monotonic() - start,

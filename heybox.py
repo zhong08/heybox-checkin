@@ -80,6 +80,8 @@ def parse_result(data):
         return Result("签到成功", message or "服务器确认签到成功")
     if state == "ignore":
         return Result("今日已签到", message or "今天已经完成签到")
+    if state in (None, ""):
+        return Result("签到结果待确认", "签到接口未返回明确状态，尚未确认今日签到记录")
     return Result("API 返回异常", message or f"无法确认签到结果，state={str(state)[:80]}")
 
 
@@ -140,16 +142,37 @@ def check_in():
     with requests.Session() as session:
         session.headers.update({"Accept": "application/json", "User-Agent": "Max-Android", "Cookie": cookie})
         log.info("正在提交签到；服务器同时检查登录状态和是否重复签到")
-        outcome = parse_result(request_json(session, "GET", BASE_URL + SIGN_PATH,
-                                            params=lambda: native_params(SIGN_PATH, account)))
+        submitted = request_json(session, "GET", BASE_URL + SIGN_PATH,
+                                 params=lambda: native_params(SIGN_PATH, account))
+        body = submitted.get("result")
+        body = body if isinstance(body, dict) else {}
+        log.info("提交响应摘要：status=%s；state=%r；signed_date=%s", str(submitted.get("status"))[:80],
+                 str(body.get("state", submitted.get("state")))[:80], str(body.get("signed_date"))[:40])
+        outcome = parse_result(submitted)
         log.info("签到状态：%s；%s", outcome.status, outcome.message)
-        if outcome.status in ("签到成功", "今日已签到"):
+        if outcome.status in ("签到成功", "今日已签到", "签到结果待确认"):
             try:
-                details = state_details(request_json(session, "GET", BASE_URL + STATE_PATH,
-                                                   params=lambda: native_params(STATE_PATH, account)))
+                state = request_json(session, "GET", BASE_URL + STATE_PATH,
+                                     params=lambda: native_params(STATE_PATH, account))
+                record = state.get("result")
+                record = record if isinstance(record, dict) else {}
+                # signed_date counts calendar days since 1970 in the Beijing timezone.
+                today = int((time.time() + 8 * 3600) // 86400)
+                confirmed = state.get("status") == "ok" and record.get("state") == "ok" \
+                    and type(record.get("signed_date")) is int and record["signed_date"] == today
+                log.info("今日记录核验：status=%s；state=%r；signed_date=%s；北京时间日编号=%s；确认=%s",
+                         str(state.get("status"))[:80], str(record.get("state"))[:80],
+                         str(record.get("signed_date"))[:40], today, confirmed)
+                if confirmed and outcome.status == "签到结果待确认":
+                    outcome = Result("今日已签到", "提交响应未给出明确状态，已通过服务器今日记录确认签到完成")
+                details = state_details(state) if confirmed else ""
                 outcome = Result(outcome.status, outcome.message, details)
                 if details:
                     log.info("%s", details)
+                if not confirmed:
+                    log.warning("未取得有效的今日签到记录，保留提交状态：%s", outcome.status)
             except Exception as exc:
-                log.warning("签到结果已保留，奖励查询失败：%s", type(exc).__name__)
+                log.warning("今日记录查询失败，保留提交状态 %s：%s", outcome.status, type(exc).__name__)
+                if outcome.status == "签到结果待确认":
+                    outcome = Result(outcome.status, f"提交响应缺少明确状态，今日记录查询失败（{type(exc).__name__}）")
     return outcome
