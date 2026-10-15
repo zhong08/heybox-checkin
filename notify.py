@@ -32,13 +32,32 @@ def send_pushplus(title, content):
         raise ValueError("PushPlus API 拒绝通知：" + redact(data.get("msg", "未提供原因"))[:300])
 
 
+def send_wxpusher(title, content):
+    token, uid = value("WXPUSHER_APP_TOKEN"), value("WXPUSHER_UID")
+    if not re.fullmatch(r"AT_[A-Za-z0-9]+", token) or not re.fullmatch(r"UID_[A-Za-z0-9]+", uid):
+        raise ValueError("WxPusher 应用令牌应以 AT_ 开头，接收用户应以 UID_ 开头")
+    with requests.Session() as session:
+        data = request_json(session, "POST", "https://wxpusher.zjiecode.com/api/send/message", json={
+            "appToken": token, "uids": [uid], "summary": title[:100],
+            "content": title + "\n\n" + content, "contentType": 1})
+    if data.get("code") != 1000:
+        raise ValueError("WxPusher API 拒绝通知：" + redact(str(data.get("msg", "未提供原因")))[:300])
+    records = data.get("data")
+    if not isinstance(records, list) or len(records) != 1 or not isinstance(records[0], dict):
+        raise ValueError("WxPusher 未返回接收用户的受理结果")
+    if records[0].get("uid") != uid:
+        raise ValueError("WxPusher 返回的接收用户不匹配")
+    if records[0].get("code") != 1000:
+        raise ValueError("WxPusher 接收用户未受理：" + redact(str(records[0].get("status", "未提供原因")))[:300])
+
+
 def send_notification(title, content):
     try:
         provider = notification_provider()
-        log.info("正在发送微信通知：%s", provider)
-        sender = send_serverchan if provider == "serverchan" else send_pushplus
+        log.info("正在发送通知：%s", provider)
+        sender = {"serverchan": send_serverchan, "pushplus": send_pushplus, "wxpusher": send_wxpusher}[provider]
         sender(redact(title).replace("\n", " "), redact(content))
-        log.info("通知状态：成功（推送服务已受理，请在微信确认收件）")
+        log.info("通知状态：成功（推送服务已受理，请在接收端确认收件）")
         return True
     except requests.RequestException as exc:
         log.error("通知状态：失败，网络/HTTP 异常 %s%s", type(exc).__name__,

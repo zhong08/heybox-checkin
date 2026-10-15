@@ -1,6 +1,6 @@
 # 飞牛小黑盒自动签到
 
-Python 3.12 + Docker + cron：每天北京时间 **00:01** 提交签到，查询服务器记录，并通过 Server酱或 PushPlus 发送微信通知。运行完成后退出，无常驻 Android 或手机在线依赖。
+Python 3.12 + Docker + cron：每天北京时间 **00:01** 提交签到，查询服务器记录，并通过 WxPusher App、Server酱或 PushPlus 发送通知。运行完成后退出，无常驻 Android 或手机在线依赖。
 
 **这是公开源码版。** 仓库不包含登录凭据、个人部署记录、App 原生库、APK 元数据或签名初始化数据。克隆后需自行准备兼容的签名资源并构建 Java 模块，才能执行真实签到。私人部署已验证 v3 提交返回 `status=ok, state=ignore`；公开源码的离线自检不会调用真实账号。
 
@@ -36,7 +36,9 @@ sudo systemctl is-active cron
 
 ## 通知和日志
 
-填 `SERVERCHAN_SENDKEY` 或 `PUSHPLUS_TOKEN`；`NOTIFY_PROVIDER` 可指定 serverchan / pushplus。成功、今日已签到、登录失效和异常都会尝试通知。推送服务受理不等于微信终端已送达。
+使用 WxPusher App 时，在私有 `.env` 填写 `NOTIFY_PROVIDER='wxpusher'`、`WXPUSHER_APP_TOKEN` 和 `WXPUSHER_UID`，接收用户需关注该应用。运行 `python main.py --test-notify` 测试。请求同时核对全局及该 UID 的业务码，令牌与 UID 统一脱敏。[WxPusher 官方 API](https://wxpusher.zjiecode.com/docs/api-reference.html)。
+
+也支持 `NOTIFY_PROVIDER='serverchan'` 配合 `SERVERCHAN_SENDKEY`，或 `NOTIFY_PROVIDER='pushplus'` 配合 `PUSHPLUS_TOKEN`。留空依次选择已配置的 WxPusher、Server酱、PushPlus。成功、今日已签到、登录失效和异常都会尝试通知；服务受理不等于接收端已显示。
 
 ```sh
 sudo docker compose run --rm -T heybox python main.py --test-notify

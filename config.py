@@ -35,10 +35,13 @@ def credentials():
 def notification_provider():
     provider = value("NOTIFY_PROVIDER").lower()
     if not provider:
-        provider = "serverchan" if value("SERVERCHAN_SENDKEY") or not value("PUSHPLUS_TOKEN") else "pushplus"
-    if provider not in ("serverchan", "pushplus"):
-        raise ValueError("NOTIFY_PROVIDER 必须为 serverchan 或 pushplus")
-    key = "SERVERCHAN_SENDKEY" if provider == "serverchan" else "PUSHPLUS_TOKEN"
-    if not value(key):
-        raise ValueError(f"缺少 {key}，请检查 .env")
+        provider = "wxpusher" if value("WXPUSHER_APP_TOKEN") else \
+            "serverchan" if value("SERVERCHAN_SENDKEY") or not value("PUSHPLUS_TOKEN") else "pushplus"
+    keys = {"wxpusher": ("WXPUSHER_APP_TOKEN", "WXPUSHER_UID"),
+            "serverchan": ("SERVERCHAN_SENDKEY",), "pushplus": ("PUSHPLUS_TOKEN",)}
+    if provider not in keys:
+        raise ValueError("NOTIFY_PROVIDER 必须为 wxpusher、serverchan 或 pushplus")
+    for key in keys[provider]:
+        if not value(key):
+            raise ValueError(f"缺少 {key}，请检查 .env")
     return provider

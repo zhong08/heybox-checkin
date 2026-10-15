@@ -63,7 +63,7 @@ nano .env
 
 看到什么：配置编辑页面。若没有 nano，可在飞牛文件管理的文本编辑功能打开 .env；不要把完整内容粘贴到公开论坛。
 
-下一步：填写真实小黑盒凭据和 Server酱 SendKey。nano 中 Ctrl+O 保存、回车确认、Ctrl+X 退出。填写自己的凭据，不要提交 .env。
+下一步：填写真实小黑盒凭据和 WxPusher APP_TOKEN、UID，并设置 NOTIFY_PROVIDER=wxpusher。nano 中 Ctrl+O 保存、回车确认、Ctrl+X 退出。填写自己的凭据，不要提交 .env。
 
 ## 5. 构建 Python 3.12 镜像
 
@@ -79,7 +79,7 @@ sudo docker compose run --rm -T heybox java -version
 
 看到什么：Built 字样及 `Python 3.12.x`。首次拉取镜像可能需要数分钟。
 
-下一步：测试微信通知。
+下一步：测试通知。
 
 ## 6. 单独测试微信
 
@@ -91,7 +91,7 @@ sudo docker compose run --rm -T heybox java -version
 sudo docker compose run --rm -T heybox python main.py --test-notify
 ```
 
-看到什么：日志显示通知受理成功，微信收到“飞牛小黑盒签到测试”。该命令不执行签到。
+看到什么：日志显示通知受理成功，WxPusher App 收到“飞牛小黑盒签到测试”。该命令不执行签到。
 
 下一步：微信确认收到后测试签到。
 

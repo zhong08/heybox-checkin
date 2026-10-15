@@ -21,3 +21,5 @@
 奖励显示为服务器今日记录，不将重复签到时查询到的奖励声称为本次新增。公开仓库不包含私人验证记录、原始请求、App 二进制或初始化数据。
 
 App 1.3.385 的 `SignInManager` 字节码补充了异步流程：提交响应除 `ignore` 外会调用 `g(-1)` 开始查询；状态为 `waiting` 时继续查询，`ok` 才确认。`g/e` 最多安排 21 次查询，延迟依次为 0、2、2、3、3、5、5 秒，之后 14 次各 10 秒。Python 对接受后的 `waiting` 采用相同上限和延迟，保留顶层 API 状态及今日日期检查。160 秒是退避时间之和，未包含原生签名和网络耗时。
+
+WxPusher 标准推送来自官方 API 文档 https://wxpusher.zjiecode.com/docs/api-reference.html 和 OpenAPI https://wxpusher.zjiecode.com/docs/openapi.yaml ：HTTPS POST /api/send/message，appToken、uids、contentType=1、summary；全局和该用户业务码均须为 1000。2026-10-15 实测 /api/send/query/status 已停用，因此生产代码不调用或轮询此接口；受理结果与 App 实际收件分别核对。

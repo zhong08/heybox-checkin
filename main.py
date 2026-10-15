@@ -13,12 +13,12 @@ from utils import log, redact, setup_logging
 
 def main():
     parser = argparse.ArgumentParser(description="飞牛小黑盒自动签到")
-    parser.add_argument("--test-notify", action="store_true", help="只测试微信通知")
+    parser.add_argument("--test-notify", action="store_true", help="只测试通知")
     args = parser.parse_args()
     setup_logging()
     start = time.monotonic()
     if args.test_notify:
-        ok = send_notification("飞牛小黑盒签到测试", "微信通知配置成功。\n\n如果收到这条消息，说明飞牛 NAS 微信通知已经配置正确。")
+        ok = send_notification("飞牛小黑盒签到测试", "通知配置成功。\n\n如果收到这条消息，说明飞牛 NAS 通知已经配置正确。")
         return 0 if ok else 2
     try:
         result = check_in()

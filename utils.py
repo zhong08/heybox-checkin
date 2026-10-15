@@ -19,7 +19,7 @@ def mask(secret):
 
 def redact(text):
     secrets = [value(k) for k in ("HEYBOX_PKEY", "HEYBOX_TOKEN", "HEYBOX_COOKIE",
-                                "SERVERCHAN_SENDKEY", "PUSHPLUS_TOKEN")]
+                                "SERVERCHAN_SENDKEY", "PUSHPLUS_TOKEN", "WXPUSHER_APP_TOKEN", "WXPUSHER_UID")]
     cookie = SimpleCookie()
     try:
         cookie.load(value("HEYBOX_COOKIE"))

@@ -121,6 +121,31 @@ def check():
             assert request.call_args.args[2] == "https://123.push.ft07.com/send/sctp123tTestNotReal.send"
         with patch("notify.request_json", return_value={"code": 400, "msg": "rejected"}):
             assert not notify.send_notification("test", "content")
+        os.environ.update(WXPUSHER_APP_TOKEN="AT_fakeAppSecret12345", WXPUSHER_UID="UID_fakeReceiver12345")
+        assert config.notification_provider() == "wxpusher"
+        assert "AT_fakeAppSecret12345" not in redact("appToken=AT_fakeAppSecret12345")
+        assert "UID_fakeReceiver12345" not in redact("UID_fakeReceiver12345")
+        accepted = {"code": 1000, "data": [{"uid": "UID_fakeReceiver12345", "code": 1000, "sendRecordId": 123}]}
+        with patch("notify.request_json", return_value=accepted) as request:
+            assert notify.send_notification("t" * 120, "body")
+            assert request.call_args.args[2] == "https://wxpusher.zjiecode.com/api/send/message"
+            payload = request.call_args.kwargs["json"]
+            assert payload["appToken"] == "AT_fakeAppSecret12345" and payload["uids"] == ["UID_fakeReceiver12345"]
+            assert len(payload["summary"]) == 100 and payload["contentType"] == 1 and payload["content"].endswith("body")
+        for failure in ({"code": 1001, "msg": "rejected"}, {"code": 1000, "data": []},
+                        {"code": 1000, "data": [{"uid": "UID_fakeReceiver12345", "code": 1001, "status": "not subscribed"}]},
+                        {"code": 1000, "data": [{"uid": "UID_wrong", "code": 1000}]}):
+            with patch("notify.request_json", return_value=failure):
+                assert not notify.send_notification("test", "body"), "global success must not hide recipient failure"
+        os.environ["NOTIFY_PROVIDER"] = "serverchan"
+        assert config.notification_provider() == "serverchan", "an explicit provider must override automatic selection"
+        os.environ["NOTIFY_PROVIDER"] = "wxpusher"
+        del os.environ["WXPUSHER_UID"]
+        try:
+            config.notification_provider()
+            assert False, "WxPusher requires a recipient"
+        except ValueError as exc:
+            assert "WXPUSHER_UID" in str(exc)
 
     session = Mock()
     session.request.side_effect = [requests.Timeout(), response(503, {}), response(200, {"status": "ok"})]
@@ -181,7 +206,7 @@ def check():
         signed = native_sign.signed_params("/task/sign_v3/sign", "42")
         assert signed["os_type"] == "Android" and signed["hkey"] == "1234ABCD"
         assert json.loads(run.call_args.kwargs["input"])["path"] == "/task/sign_v3/sign/"
-        assert "SERVERCHAN_SENDKEY" not in run.call_args.kwargs["env"]
+        assert not {"SERVERCHAN_SENDKEY", "WXPUSHER_APP_TOKEN", "WXPUSHER_UID"} & run.call_args.kwargs["env"].keys()
         # Native uint32 hex strings omit leading zeroes; never pad or alter them.
         for hkey, rnd in (("0", "14:0"), ("123ABCD", "14:567ABCD"), ("1234ABCD", "14:5678ABCD")):
             run.return_value.stdout = json.dumps({"_time": "1791780466", "nonce": "A" * 32, "hkey": hkey, "_rnd": rnd})
