@@ -1,6 +1,6 @@
 # 接口与依赖来源
 
-核对日期：2026-10-14。这里记录公开实现的依据，不代表接口承诺长期稳定。
+核对日期：2026-10-15。这里记录公开实现的依据，不代表接口承诺长期稳定。
 
 - 签到、任务列表及 Android 参数：原作者的抓包记录 https://github.com/wentaoabcd/QinglongCheckinScripts/blob/main/docs/heybox-api.md 。记录的接口为 `/task/sign_v3/sign`、`/task/list_v2/`；签到 state 为 success/ignore/fail。
 - 扫码登录：MIT 项目 https://github.com/shadowfish07/heybox-cli ，文件 `internal/api/client.go`、`internal/auth/credential.go`。扫码创建和状态接口必须返回真实 qr_url 和凭据后才保存。
@@ -19,3 +19,5 @@
 程序直接提交 v3 签到；state=success/ignore 分别对应“签到成功/今日已签到”，拒绝响应如实通知失败。随后查询同样来自本人 App 日志的 `/task/sign_v3/get_sign_state`，读取 sign_in_exp、sign_in_coin、sign_in_streak、level_info.level。提交 state 为空或缺失时，标为结果待确认，并核对状态接口的 status=ok、state=ok 和 signed_date 与北京时间今日的日编号一致后，才报告今日已签到；查询失败或旧日期不能确认。明确拒绝、登录失效和 state=fail 不用既有记录覆盖。绝不仅因 status=ok 就宣布成功。`/task/list_v2/` 在新版移动会话下拒绝请求，已从日常执行链路移除。
 
 奖励显示为服务器今日记录，不将重复签到时查询到的奖励声称为本次新增。公开仓库不包含私人验证记录、原始请求、App 二进制或初始化数据。
+
+App 1.3.385 的 `SignInManager` 字节码补充了异步流程：提交响应除 `ignore` 外会调用 `g(-1)` 开始查询；状态为 `waiting` 时继续查询，`ok` 才确认。`g/e` 最多安排 21 次查询，延迟依次为 0、2、2、3、3、5、5 秒，之后 14 次各 10 秒。Python 对接受后的 `waiting` 采用相同上限和延迟，保留顶层 API 状态及今日日期检查。160 秒是退避时间之和，未包含原生签名和网络耗时。

@@ -78,6 +78,26 @@ def check():
             patch("heybox.request_json", side_effect=[{"status": "ok", "result": {"state": ""}}, requests.Timeout()]):
         assert check_in().status == "签到结果待确认"
 
+    pending = {"status": "ok", "result": {"state": "waiting"}}
+    submitted = {"status": "ok", "result": {"state": ""}}
+    # Match the real asynchronous sequence: accepted -> waiting -> waiting -> today's record.
+    with patch("heybox.time.time", return_value=1483200060), patch("heybox.time.sleep") as sleep, \
+            patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[submitted, pending, pending, finished]) as request:
+        outcome = check_in()
+        assert outcome.status == "今日已签到" and "28 天" in outcome.details
+        assert request.call_count == 4 and [call.args[0] for call in sleep.call_args_list] == [2, 2]
+    with patch("heybox.time.sleep") as sleep, patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[submitted] + [pending] * 21) as request:
+        outcome = check_in()
+        assert outcome.status == "签到结果待确认" and "21 次" in outcome.message and not outcome.details
+        assert request.call_count == 22
+        assert [call.args[0] for call in sleep.call_args_list] == [2, 2, 3, 3, 5, 5] + [10] * 14
+    with patch("heybox.time.sleep") as sleep, patch("heybox.credentials", return_value=("42", "pkey=test")), \
+            patch("heybox.request_json", side_effect=[submitted, pending, {"status": "need_login"}]) as request:
+        assert check_in().status == "签到结果待确认"
+        assert request.call_count == 3 and sleep.call_count == 1
+
     with patch.dict(os.environ, {}, clear=True):
         try:
             config.credentials()

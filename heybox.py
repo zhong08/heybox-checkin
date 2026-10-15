@@ -15,6 +15,8 @@ BASE_URL = "https://api.xiaoheihe.cn"
 SIGN_PATH = "/task/sign_v3/sign"
 TASK_PATH = "/task/list_v2/"
 STATE_PATH = "/task/sign_v3/get_sign_state"
+# SignInManager.g/e: immediate query, then 2/3/5/10-second backoff, 21 queries at most.
+STATE_POLL_DELAYS = (0, 2, 2, 3, 3, 5, 5) + (10,) * 14
 ALPHABET = "AB45STUVWZEFGJ6CH01D237IXYPQRKLMN89"
 WEB_PARAMS = {"os_type": "web", "version": "999.0.4", "x_app": "heybox_website",
               "app": "web", "client_type": "web", "web_version": "2.5",
@@ -152,17 +154,26 @@ def check_in():
         log.info("签到状态：%s；%s", outcome.status, outcome.message)
         if outcome.status in ("签到成功", "今日已签到", "签到结果待确认"):
             try:
-                state = request_json(session, "GET", BASE_URL + STATE_PATH,
-                                     params=lambda: native_params(STATE_PATH, account))
-                record = state.get("result")
-                record = record if isinstance(record, dict) else {}
-                # signed_date counts calendar days since 1970 in the Beijing timezone.
-                today = int((time.time() + 8 * 3600) // 86400)
-                confirmed = state.get("status") == "ok" and record.get("state") == "ok" \
-                    and type(record.get("signed_date")) is int and record["signed_date"] == today
-                log.info("今日记录核验：status=%s；state=%r；signed_date=%s；北京时间日编号=%s；确认=%s",
-                         str(state.get("status"))[:80], str(record.get("state"))[:80],
-                         str(record.get("signed_date"))[:40], today, confirmed)
+                for attempt, delay in enumerate(STATE_POLL_DELAYS, 1):
+                    if delay:
+                        time.sleep(delay)
+                    state = request_json(session, "GET", BASE_URL + STATE_PATH,
+                                         params=lambda: native_params(STATE_PATH, account))
+                    record = state.get("result")
+                    record = record if isinstance(record, dict) else {}
+                    # signed_date counts calendar days since 1970 in the Beijing timezone.
+                    today = int((time.time() + 8 * 3600) // 86400)
+                    confirmed = state.get("status") == "ok" and record.get("state") == "ok" \
+                        and type(record.get("signed_date")) is int and record["signed_date"] == today
+                    log.info("今日记录核验 %s/%s：status=%s；state=%r；signed_date=%s；北京时间日编号=%s；确认=%s",
+                             attempt, len(STATE_POLL_DELAYS), str(state.get("status"))[:80],
+                             str(record.get("state"))[:80], str(record.get("signed_date"))[:40], today, confirmed)
+                    if state.get("status") != "ok" or record.get("state") != "waiting":
+                        break
+                    if attempt < len(STATE_POLL_DELAYS):
+                        log.info("服务器仍在处理签到，%s 秒后再次查询", STATE_POLL_DELAYS[attempt])
+                if state.get("status") == "ok" and record.get("state") == "waiting" and outcome.status == "签到结果待确认":
+                    outcome = Result(outcome.status, f"服务器仍在处理签到，已查询 {attempt} 次，尚未取得今日完成记录")
                 if confirmed and outcome.status == "签到结果待确认":
                     outcome = Result("今日已签到", "提交响应未给出明确状态，已通过服务器今日记录确认签到完成")
                 details = state_details(state) if confirmed else ""
